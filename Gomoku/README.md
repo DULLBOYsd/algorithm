@@ -30,7 +30,8 @@
 |---|---|---|---|
 | v1 | `Gomoku_ai_vs_ai_v1.cpp` | 黑 = BFS（写死），白 = DeepSeek | HTTP 服务 + 内嵌对战网页 + 自动/单步控制 |
 | v2 | `Gomoku_ai_vs_ai_v2.cpp` | 黑、白各自下拉选 bfs / alphabeta / deepseek | **可插拔模型**：namespace 隔离三个算法；DSEngine 执黑时翻转盘面视角；内嵌 α-β 降为深度 3（深度 4 当年中盘 300 秒+ 不可用） |
-| v3（当前版） | `Gomoku_ai_vs_ai_v3.cpp` | 黑、白各自四选一（新增 **human**） | 内嵌 ABAlgo 升级为**第三代算法**（双向 checkFour）；**人机对战**（点击落子 + 悬停预览 + AI 自动应手）；HTTP API 扩展（落子坐标、算法配置、错误字段） |
+| v3 | `Gomoku_ai_vs_ai_v3.cpp` | 黑、白各自四选一（新增 **human**） | 内嵌 ABAlgo 升级为**第三代算法**（双向 checkFour）；**人机对战**（点击落子 + 悬停预览 + AI 自动应手）；HTTP API 扩展（落子坐标、算法配置、错误字段） |
+| v4（当前版） | `Gomoku_ai_vs_ai_v4.cpp` | 黑、白各自四选一 | 内嵌 ABAlgo 升级为**第四代算法**：候选排序升级为威胁分 aroundScore（落子前后棋形分差）；checkFour/pushFour 四威胁强制候选；胜负判定透明化（非法着法判负如实显示，不再伪装成五连）。**v4.2（2026-11-25）同步用户更正版 tree_v4**：getBestPos 必败兑底（所有候选 INT_MIN 时按对方视角威胁分选最大堵点）+ checkFour 反向连子计数修复（补 bcnt++，消除幻胜，实证见第 11 节第 8 条） |
 
 ## 2. 文件清单
 
@@ -40,9 +41,11 @@
 ├── Gomoku_strategy_tree.cpp     # 第一代算法：BFS 决策树（含测试 main）
 ├── alphabeta_gomoku.cpp         # 第二代算法：DFS + α-β 剪枝
 ├── Gomoku_strategy_tree_v3.cpp  # 第三代算法：α-β + 成五短路 + checkFour/pushFour
+├── Gomoku_strategy_tree_v4.cpp  # 第四代算法（独立版）：v4 + getBestPos 必败兑底 + checkFour bcnt 修复
 ├── Gomoku_ai_vs_ai_v1.cpp       # 对战框架 v1：黑 BFS vs 白 DeepSeek
 ├── Gomoku_ai_vs_ai_v2.cpp       # 对战框架 v2：三算法可插拔
-├── Gomoku_ai_vs_ai_v3.cpp       # 对战框架 v3（当前版）：四模式 + 人机对战
+├── Gomoku_ai_vs_ai_v3.cpp       # 对战框架 v3：四模式 + 人机对战
+├── Gomoku_ai_vs_ai_v4.cpp       # 对战框架 v4（当前版）：内嵌第四代算法 + 胜负判定透明化
 └── README.md
 ```
 
@@ -51,10 +54,11 @@
 | `Gomoku_strategy_tree.cpp` | 第一代算法（独立版） | BFS 建树 + DFS 回溯 + 字符串棋形评估；`main` 为空棋盘冒烟测试。编译前需两处一行修复（见 4.3） |
 | `alphabeta_gomoku.cpp` | 第二代算法（独立版） | 深度 4 的 DFS + α-β 重构版，评估函数与第一代完全一致 |
 | `Gomoku_strategy_tree_v3.cpp` | 第三代算法（独立版） | 分值体系为 long long；含成五短路、11011 棋形、checkFour/pushFour。可直接编译（已知问题见第 11 节第 1 条） |
-| `Gomoku_ai_vs_ai_v3.cpp` | 对战主程序（当前版） | 内嵌四套执子方（BFSAlgo / ABAlgo 三代 / DSEngine / human），`Battle` 类调度对局与判胜，对战页面 HTML 内嵌于源码 |
+| `Gomoku_strategy_tree_v4.cpp` | 第四代算法（独立版） | 威胁分排序 + 必败兑底 + bcnt 修复后的纯算法版；与 v4 框架内嵌 ABAlgo 同源 |
+| `Gomoku_ai_vs_ai_v4.cpp` | 对战主程序（当前版） | 内嵌四套执子方（BFSAlgo / ABAlgo 四代 / DSEngine / human），`Battle` 类调度对局与判胜，对战页面 HTML 内嵌于源码 |
 | `httplib.h` | 编译依赖 | cpp-httplib v0.65.0（Yuji Hirose，MIT License）单头库，仅用其 HTTP Server 部分 |
 
-v1 / v2 框架保留作为演进记录，均可独立编译运行；日常使用 v3 即可。
+v1 / v2 / v3 框架保留作为演进记录，均可独立编译运行；日常使用 v4 即可。
 
 ## 3. 环境要求
 
@@ -317,7 +321,7 @@ curl -X POST "http://localhost:8080/api/reset?black=alphabeta&white=deepseek"
 | 自动对局间隔 | 前端 `autoLoop()` 中 `setTimeout` | 350 ms |
 | 人机 AI 应手延迟 | 前端 human 分支 `setTimeout` | 100 ms |
 
-**同步修改提醒**：`Gomoku_strategy_tree_v3.cpp`（独立版）与 `Gomoku_ai_vs_ai_v3.cpp` 内嵌的 ABAlgo 是两份拷贝，且**目前并不完全一致**（独立版的 checkFour 调用是单方向，框架内嵌是双向，见第 11 节第 1 条）。修改算法时请**两处同步**，否则独立版与对战版行为不一致。
+**同步修改提醒**：独立版算法文件与框架内嵌 ABAlgo 是两份拷贝，修改算法时请**两处同步**，否则独立版与对战版行为不一致。历史教训：v4 的 getBestPos 必败兑底曾只改了独立版未同步进框架，导致修复后实战仍复现漏堵；checkFour 的反向连子计数 bug 同理。当前 `Gomoku_strategy_tree_v4.cpp`（独立版）与 `Gomoku_ai_vs_ai_v4.cpp` 内嵌 ABAlgo 已逐字一致（含 bcnt++ 修复），可放心对照。
 
 ## 11. 已知问题与注意事项
 
@@ -327,11 +331,16 @@ curl -X POST "http://localhost:8080/api/reset?black=alphabeta&white=deepseek"
    ```
    对战框架 `Gomoku_ai_vs_ai_v3.cpp` 内嵌副本已是双向版，全部回归通过。
 2. **第三代耗时特征**：正常中盘 1–5 秒/手；劣势局（几乎所有根候选都会触发对方成五短路）根层全候选需全额搜索，极端实测约 20 秒。若想提速可把 `ABAlgo::DEPTH` 降到 3，代价是看浅一层。
-3. **checkFour 已知限制**：不识别"由本次落子新形成的 11011 型跳四"（见 6.3）；防守已有跳四不受影响。
+3. **checkFour 已知限制**：不识别"由本次落子在缺口后方新形成的 11011 型跳四"（反向/正向扫描均在第一个空位截断，跨缺口连子不计入）；缓解：该点因 aroundScore 成四加分（1e5）必进 top-15 候选，实际不影响搜索覆盖。防守已有跳四、1110 1 型成五点、反向连四均已由 v4.2 的 bcnt++ 修复覆盖。
 4. **同步 API**：`/api/step` 计算期间请求持续等待，前端不要给它设置过短的超时；期间其他请求因全局互斥锁会排队等待。
 5. **第一代独立版编译修复**：`Gomoku_strategy_tree.cpp` 需按第 4.3 节补 `#include <climits>` 并补全 `getNewNode` 调用参数后方可编译；对战主程序与第三代独立版无此问题。
 6. **测试脚本教训**：给 `int alpha` 形参传 `long long` 初值时勿用 `LLONG_MIN`——低 32 位截断后变成 0，首轮候选会在 alpha=0 下被错误剪枝（曾导致回归脚本误报 FAIL）；请用 `INT_MIN`。
 7. **端口安全**：服务监听 `0.0.0.0`，公网部署请自行增加访问控制，或改为监听 `127.0.0.1`。
+8. **v4.2 修复实证（2026-11-25，实战 33 手盘面回放）**：用户实战局黑 29 手 (8,2) 后在 col=2 有跳三 (6,2)(8,2)(9,2)（成活四点 (7,2)），黑 33 手 (10,4) 再成反对角线跳三，白方第 34手下出远角废子后黑 35 手 (9,5) 成五。逐层回放结论：
+   - 修复前（框架内嵌旧版 + 无兜底）：33 手后白方所有候选 INT_MIN，getBestPos 返回 (-1,-1)，走邻域兜底废子；
+   - 仅加 getBestPos 兜底（用户更正版原样）：第 34 手选 (7,2) 合理堵点；但 29 手后白 (10,4) 与 col=4 已有 (6,4)(7,4)(8,4) 构成 1110 1 跳四，因 checkFour 反向连子恒为 0（bcnt 未累加），黑方堵 (9,4) 的着法进不了 existFour，搜索把 (10,4) 误判为 INT_MAX 幻胜，白 30 手会"自信地"下 (10,4) 送掉主动权；
+   - 补 bcnt++ 后：(10,4) 降为 98040，白 30 手选 (5,2) 真堵跳三（99440 全场最高），32 手 (9,4)（强制反四），34 手 (7,2)（必败兜底），INT_MIN 仅出现在真必败点。
+   - 第四代劣势局耗时实测更新：中盘单手最高约 36 秒（DEPTH=4 全宽 + existFour 全展开，根层候选全部触发对方成五短路时最慢），网页自动对局建议把间隔调大或改用单步模式。
 
 ## 12. 许可说明
 
